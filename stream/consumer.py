@@ -50,7 +50,11 @@ def consume_one_message(topic: str | None = None):
 
     if not conf.get('bootstrap.servers'):
         print(f"[mock-consume] returning dummy message from {topic}")
-        return {"status": "mocked", "topic": topic, "message": {"user_id": 1, "movie_id": 50}}
+        return {
+            "status": "mocked",
+            "topic": topic,
+            "message": {"user_id": 1, "movie_id": 50, "text": "hello world"}
+        }
 
     from confluent_kafka import Consumer, KafkaException
     try:
