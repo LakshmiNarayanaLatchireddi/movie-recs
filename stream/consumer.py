@@ -1,5 +1,5 @@
 import os, time
-from confluent_kafka import Consumer
+from confluent_kafka import Consumer, KafkaException
 
 conf = {
   'bootstrap.servers': os.environ.get('KAFKA_BOOTSTRAP'),
@@ -30,6 +30,48 @@ def main():
             c.commit(msg)
     finally:
         c.close()
+        
+def consume_one_message():
+    """
+    Dummy consumer for CI testing.
+    If Kafka credentials are not set, returns a mocked message instead of connecting.
+    """
+    conf = {
+        'bootstrap.servers': os.environ.get('KAFKA_BOOTSTRAP'),
+        'security.protocol': 'SASL_SSL',
+        'sasl.mechanisms': 'PLAIN',
+        'sasl.username': os.environ.get('KAFKA_API_KEY'),
+        'sasl.password': os.environ.get('KAFKA_API_SECRET'),
+        'group.id': os.environ.get('KAFKA_GROUP', 'ingestor'),
+        'auto.offset.reset': 'earliest',
+    }
+
+    topic = os.environ.get('WATCH_TOPIC', 'myteam.watch')
+
+    # Mock mode (for CI)
+    if not conf['bootstrap.servers']:
+        print(f"[mock-consume] returning dummy message from {topic}")
+        return {"status": "mocked", "topic": topic, "message": {"user_id": 1, "movie_id": 50}}
+
+    try:
+        c = Consumer(conf)
+        c.subscribe([topic])
+        msg = c.poll(2.0)
+        if msg is None:
+            return {"status": "timeout", "topic": topic}
+        if msg.error():
+            raise KafkaException(msg.error())
+        record = msg.value().decode("utf-8")
+        print(f"Consumed: {record}")
+        return {"status": "ok", "topic": topic, "message": record}
+    except Exception as e:
+        print(f"[warn] Kafka consume failed: {e}")
+        return {"status": "error", "error": str(e)}
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()
