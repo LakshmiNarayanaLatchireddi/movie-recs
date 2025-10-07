@@ -1,5 +1,7 @@
 # Optional: team-local event generator wrapper (implement if needed).
 import os, json
+
+from streamlit import event
 from confluent_kafka import Producer, KafkaException
 
 
@@ -23,7 +25,7 @@ def produce_test_message(topic: str | None = None):
     # Mock mode (for CI)
     if not conf.get('bootstrap.servers'):
         print(f"[mock-produce] {event} to {topic}")
-        return {"status": "mocked", "topic": topic, "event": event}
+        return {"status": "Produced (mock)", "topic": topic, "event": event}
 
     try:
         p = Producer(conf)
