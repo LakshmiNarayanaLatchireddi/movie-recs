@@ -41,4 +41,4 @@ See repo tree; update components as you progress through milestones.
 
 ## Secrets & Safety
 - Use **GitHub Environments/Secrets**. Never commit secrets. Rotate if leaked.
-- Follow your team contract’s Definition of Done. Lint and tests must pass before merge.
+- Follow team contract’s Definition of Done. Lint and tests must pass before merge.
