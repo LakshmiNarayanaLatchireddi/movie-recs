@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [ main, feature/* ]
 
-# allow pushing images to GHCR with GITHUB_TOKEN
 permissions:
   contents: read
   packages: write
@@ -14,10 +13,6 @@ permissions:
 jobs:
   build-test:
     runs-on: ubuntu-latest
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_REPO: ${{ toLower(github.repository) }}   # owner/repo in lowercase
-      IMAGE_TAG: ${{ github.sha }}
 
     steps:
       - name: Checkout repository
@@ -36,7 +31,6 @@ jobs:
       - name: Run tests
         run: pytest --maxfail=1 --disable-warnings -q
 
-      # ---- Docker build & push (robust way) ----
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -56,6 +50,7 @@ jobs:
           context: .
           file: docker/recommender.Dockerfile
           push: true
-          tags: ghcr.io/${{ env.IMAGE_REPO }}/reco:${{ env.IMAGE_TAG }}
+          # ⬇️ hard-coded lowercase owner/repo
+          tags: ghcr.io/lakshminarayanalatchireddi/movie-recs/reco:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
