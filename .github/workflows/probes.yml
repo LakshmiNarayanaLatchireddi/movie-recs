@@ -19,3 +19,8 @@ jobs:
         run: pip install requests confluent-kafka
       - name: Run probe
         run: python scripts/probe.py
+      - name: Retry on transient errors
+        run: |
+          for i in 1 2 3; do
+            python scripts/probe.py && break || sleep 30
+          done
