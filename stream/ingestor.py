@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,23 +16,23 @@ from pydantic import BaseModel, Field
 class WatchEvent(BaseModel):
     user_id: int
     movie_id: int
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     
 class RateEvent(BaseModel):
     user_id: int
     movie_id: int
     rating: float
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 class RecoRequest(BaseModel):
     user_id: int
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 class RecoResponse(BaseModel):
     user_id: int
     movie_ids: List[int]
     scores: List[float]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 # Map topics to their schema models
 TOPIC_SCHEMAS = {
@@ -106,9 +106,10 @@ class StreamIngestor:
         # Convert to DataFrame
         df = pd.DataFrame(batch)
         
-        # Create timestamp-based partition path
-        now = datetime.utcnow()
-        partition_path = self.storage_path / topic_type / f"year={now.year}" / f"month={now.month:02d}" / f"day={now.day:02d}"
+        # Create timestamp-based partition path with year-month-day format
+        now = datetime.now(UTC)
+        date_str = now.strftime('%Y-%m-%d')
+        partition_path = self.storage_path / topic_type / date_str
         partition_path.mkdir(parents=True, exist_ok=True)
         
         # Write parquet file with timestamp in name
@@ -127,7 +128,7 @@ class StreamIngestor:
     def run(self, timeout_sec: float = 1.0) -> None:
         """Main ingestion loop."""
         print("Starting ingestion...")
-        last_flush_time = datetime.utcnow()
+        last_flush_time = datetime.now(UTC)
 
         try:
             while True:
@@ -157,7 +158,7 @@ class StreamIngestor:
                         self._flush_batch(topic_type)
 
                 # Check if we need to flush based on time
-                now = datetime.utcnow()
+                now = datetime.now(UTC)
                 if (now - last_flush_time).total_seconds() >= self.flush_interval_sec:
                     for topic_type in self.batches:
                         self._flush_batch(topic_type)
