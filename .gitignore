@@ -5,7 +5,7 @@ __pycache__/
 .venv/
 .env
 .env.*
-infra\kafka.env
+*.env
 # Jupyter
 .ipynb_checkpoints/
 # OS
