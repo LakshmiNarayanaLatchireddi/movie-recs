@@ -1,7 +1,7 @@
 # Cloud-Native Recommender
 
 [![Probes](https://github.com/mlops-group-proj/movie-recs/actions/workflows/probes.yml/badge.svg)](https://github.com/mlops-group-proj/movie-recs/actions/workflows/probes.yml)
-[![CI](https://github.com/mlops-group-proj/movie-recs/actions/workflows/cd.yml/badge.svg)](https://github.com/mlops-group-proj/movie-recs/actions/workflows/ci.yml)
+[![CI](https://github.com/mlops-group-proj/movie-recs/actions/workflows/ci.yml/badge.svg)](https://github.com/mlops-group-proj/movie-recs/actions/workflows/ci.yml)
 [![CD](https://github.com/mlops-group-proj/movie-recs/actions/workflows/cd.yml/badge.svg)](https://github.com/mlops-group-proj/movie-recs/actions/workflows/cd.yml)
 
 ## Quickstart
