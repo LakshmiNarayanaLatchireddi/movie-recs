@@ -2,13 +2,11 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 
-
 @dataclass
 class EvalResult:
     users: int
     hr: float
     ndcg: float
-
 
 def _ndcg_at_k(rank, k):
     return 1.0 / np.log2(rank + 1) if rank <= k else 0.0
@@ -19,7 +17,6 @@ def evaluate_topk(model, test_df, user_col, item_col, k=5,
     users = []
     hrs, ndcgs = [], []
 
-    # --- normalize all_items ---
     if all_items is None:
         if train_df is None:
             raise ValueError("Provide train_df or all_items for negative sampling.")
@@ -28,12 +25,10 @@ def evaluate_topk(model, test_df, user_col, item_col, k=5,
         if not isinstance(all_items, pd.Index):
             all_items = pd.Index(all_items)
 
-    # --- prepare seen items per user ---
     seen = train_df.groupby(user_col)[item_col].apply(set) if train_df is not None else pd.Series(dtype=object)
 
     rng = np.random.default_rng(42)
 
-    # --- evaluate each user ---
     for uid, pos_list in test_df.groupby(user_col)[item_col].apply(list).items():
         pos = pos_list[0]
         user_seen = seen.get(uid, set())
