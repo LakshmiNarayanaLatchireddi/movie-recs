@@ -1,117 +1,58 @@
-from __future__ import annotations
-import random
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Set
-
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
 
 
 @dataclass
 class EvalResult:
     users: int
-    k: int
     hr: float
     ndcg: float
 
 
-def _sample_negatives_for_user(
-    user_id: int,
-    pos_items_user: Set[int],
-    candidate_items: Sequence[int],
-    n: int,
-) -> List[int]:
-    # Exclude user's positives from sampling space
-    pool = [iid for iid in candidate_items if iid not in pos_items_user]
-    if len(pool) < n:
-        # fall back (rare in very small toy sets)
-        return random.sample(pool, len(pool))
-    return random.sample(pool, n)
+def _ndcg_at_k(rank, k):
+    return 1.0 / np.log2(rank + 1) if rank <= k else 0.0
 
 
-def evaluate_topk(
-    model,
-    test_df: pd.DataFrame,
-    user_col: str = "user_id",
-    item_col: str = "item_id",
-    k: int = 10,
-    train_df: Optional[pd.DataFrame] = None,
-    negatives_per_user: int = 99,
-    items_df: Optional[pd.DataFrame] = None,
-    rng_seed: int = 42,
-) -> EvalResult:
-    """
-    Leave-one-out style evaluation:
-      For each user with exactly one positive in test_df, sample N negatives,
-      score [1 positive + N negatives], compute HR@K and NDCG@K, then average.
+def evaluate_topk(model, test_df, user_col, item_col, k=5,
+                  train_df=None, negatives_per_user=99, all_items=None):
+    users = []
+    hrs, ndcgs = [], []
 
-    The model must implement:
-      score_items(user_id: int, item_ids: Sequence[int]) -> np.ndarray[float]
-    """
-    random.seed(rng_seed)
-    np.random.seed(rng_seed)
-
-    # Build candidate item universe
-    if items_df is not None and item_col in items_df.columns:
-        all_items = items_df[item_col].astype(int).unique().tolist()
+    # --- normalize all_items ---
+    if all_items is None:
+        if train_df is None:
+            raise ValueError("Provide train_df or all_items for negative sampling.")
+        all_items = pd.Index(pd.concat([train_df[item_col], test_df[item_col]]).unique())
     else:
-        # fallback to all items seen anywhere
-        series_list = [test_df[item_col]]
-        if train_df is not None and item_col in train_df.columns:
-            series_list.append(train_df[item_col])
-        all_items = pd.concat(series_list).astype(int).unique().tolist()
+        if not isinstance(all_items, pd.Index):
+            all_items = pd.Index(all_items)
 
-    # Map user -> set of positives (train+test) to avoid leakage in negatives
-    user_pos = {}
-    if train_df is not None:
-        for u, g in train_df.groupby(user_col):
-            user_pos[int(u)] = set(map(int, g[item_col].tolist()))
-    for u, g in test_df.groupby(user_col):
-        user_pos.setdefault(int(u), set()).update(map(int, g[item_col].tolist()))
+    # --- prepare seen items per user ---
+    seen = train_df.groupby(user_col)[item_col].apply(set) if train_df is not None else pd.Series(dtype=object)
 
-    # Keep only users with exactly ONE positive in test set (leave-one-out)
-    test_counts = test_df.groupby(user_col)[item_col].count()
-    loo_users = set(map(int, test_counts[test_counts == 1].index.tolist()))
-    if not loo_users:
-        return EvalResult(users=0, k=k, hr=0.0, ndcg=0.0)
+    rng = np.random.default_rng(42)
 
-    # Fast lookup: user -> the single positive item in test
-    test_pos_map = (
-        test_df.groupby(user_col)[item_col].first().astype(int).to_dict()
-    )
+    # --- evaluate each user ---
+    for uid, pos_list in test_df.groupby(user_col)[item_col].apply(list).items():
+        pos = pos_list[0]
+        user_seen = seen.get(uid, set())
+        pool = all_items.difference(pd.Index(list(user_seen) + [pos]))
 
-    hits = 0.0
-    ndcgs = 0.0
-    user_count = 0
+        n = min(negatives_per_user, len(pool))
+        if n == 0:
+            continue
 
-    for u in loo_users:
-        pos_item = int(test_pos_map[u])
-        negs = _sample_negatives_for_user(
-            user_id=u,
-            pos_items_user=user_pos.get(u, set()),
-            candidate_items=all_items,
-            n=negatives_per_user,
-        )
-        candidates = [pos_item] + negs
+        cand_negs = pool.values if n == len(pool) else pool.values[rng.choice(len(pool), size=n, replace=False)]
+        candidates = [pos] + cand_negs.tolist()
 
-        # Score
-        scores = model.score_items(u, candidates)
-        # Higher score = better rank
-        order = np.argsort(-scores)
-        ranked_items = [candidates[i] for i in order]
+        scores = model.score_items(uid, candidates)
+        order = np.argsort(scores)[::-1]
+        ranked = [candidates[i] for i in order]
+        rank = ranked.index(pos) + 1  # 1-based
 
-        # Find rank (1-based)
-        rank = ranked_items.index(pos_item) + 1
+        hrs.append(1.0 if rank <= k else 0.0)
+        ndcgs.append(_ndcg_at_k(rank, k))
+        users.append(uid)
 
-        # HR@K
-        if rank <= k:
-            hits += 1.0
-            # NDCG@K
-            ndcgs += 1.0 / np.log2(rank + 1)
-        # else add 0 to both
-
-        user_count += 1
-
-    hr = hits / max(1, user_count)
-    ndcg = ndcgs / max(1, user_count)
-    return EvalResult(users=user_count, k=k, hr=hr, ndcg=ndcg)
+    return EvalResult(users=len(users), hr=float(np.mean(hrs)), ndcg=float(np.mean(ndcgs)))

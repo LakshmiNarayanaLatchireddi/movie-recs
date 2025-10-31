@@ -1,16 +1,6 @@
 {
   "users": 2,
-  "k": 5,
-  "negatives": 99,
-  "hr": 0.0,
-  "ndcg": 0.0,
-  "model": "baseline:popularity",
-  "train_path": "src/data/interactions_train.csv",
-  "test_path": "src/data/interactions_test.csv",
-  "items_path": "src/data/items.csv",
-  "user_col": "user_id",
-  "item_col": "item_id",
-  "rating_col": "rating",
-  "time_col": "timestamp",
-  "seed": 42
+  "HR@5": 1.0,
+  "NDCG@5": 0.38685280723454163,
+  "model": "baseline:popularity"
 }
