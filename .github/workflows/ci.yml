@@ -7,8 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  build-test:
-    name: build-test (pull_request)
+  # ---------- PR: build & test ----------
+  build-test-pr:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
@@ -19,30 +19,34 @@ jobs:
       - run: pip install -r requirements.txt
       - run: pytest -q
 
-  # Optional: make sure Dockerfile builds on PRs (no push)
+  # ---------- PR: build image only (no push) ----------
   build-image-pr:
-    name: build-image (pull_request, no push)
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    needs: build-test
+    needs: build-test-pr
     steps:
       - uses: actions/checkout@v4
-      - name: Build (no push)
+      - name: Build image (no push)
         env:
-          DOCKERFILE: recommender.Dockerfile   # << use your file name
+          DOCKERFILE: recommender.Dockerfile
         run: |
-          IMAGE_TAG=$(echo $GITHUB_SHA | cut -c1-7)
-          echo "Building Docker image with tags: $IMAGE_TAG (no push)"
-          docker build -f "$DOCKERFILE" -t movie-recs:$IMAGE_TAG .
+          set -e
+          TAG=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "Building image tag: ${TAG} (PR, no push)"
+          docker build -f "${DOCKERFILE}" -t movie-recs:${TAG} .
 
-  # Push only when code lands on main (after merge)
+  # ---------- MAIN: build & push only when allowed ----------
   build-and-push:
-    name: build-and-push (main)
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # Only on push to main, only on the canonical repo (not forks),
+    # and only if the secret exists (prevents failures when GHCR_PAT is missing).
+    if: ${{ github.event_name == 'push'
+            && github.ref == 'refs/heads/main'
+            && github.repository_owner == 'mlops-group-proj'
+            && secrets.GHCR_PAT != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write        # needed for GHCR push
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +55,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}   # classic PAT with write:packages & SSO approved
+          password: ${{ secrets.GHCR_PAT }}
 
       - name: Build image
         env:
@@ -59,22 +63,23 @@ jobs:
           IMAGE_NAME: ghcr.io/${{ github.repository }}/movie-recs
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -f "$DOCKERFILE" -t $IMAGE_NAME:$IMAGE_TAG .
-          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+          set -e
+          docker build -f "${DOCKERFILE}" -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+          docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
 
       - name: Push image
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository }}/movie-recs
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker push $IMAGE_NAME:$IMAGE_TAG
-          docker push $IMAGE_NAME:latest
+          set -e
+          docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+          docker push "${IMAGE_NAME}:latest"
 
-  # Optional cleanup job, only after push on main
+  # ---------- MAIN: cleanup only if push ran ----------
   build-push-cleanup:
-    name: build-push-cleanup (main)
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && needs.build-and-push.result == 'success' }}
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - run: echo "Cleanup done"
+      - run: echo "Cleanup after successful push"
