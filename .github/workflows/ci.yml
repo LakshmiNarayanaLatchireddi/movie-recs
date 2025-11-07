@@ -1,85 +1,154 @@
-name: CI Pipeline
+name: CI & CD Pipeline
 
 on:
   pull_request:
-    branches: [ main ]
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
-  # ---------- PR: build & test ----------
-  build-test-pr:
-    if: ${{ github.event_name == 'pull_request' }}
+  # --------------------------------------------------------------
+  # 1) Test job – runs on PRs and on pushes to main
+  # --------------------------------------------------------------
+  test:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # Checkout & Python setup
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: pytest -q
+          python-version: "3.11"
+          cache: "pip"
 
-  # ---------- PR: build image only (no push) ----------
-  build-image-pr:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    needs: build-test-pr
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build image (no push)
-        env:
-          DOCKERFILE: recommender.Dockerfile
+      - name: Install dependencies
         run: |
-          set -e
-          TAG=$(echo "${GITHUB_SHA}" | cut -c1-7)
-          echo "Building image tag: ${TAG} (PR, no push)"
-          docker build -f "${DOCKERFILE}" -t movie-recs:${TAG} .
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-  # ---------- MAIN: build & push only when allowed ----------
-  build-and-push:
-    # Only on push to main, only on the canonical repo (not forks),
-    # and only if the secret exists (prevents failures when GHCR_PAT is missing).
-    if: ${{ github.event_name == 'push'
-            && github.ref == 'refs/heads/main'
-            && github.repository_owner == 'mlops-group-proj'
-            && secrets.GHCR_PAT != '' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
+      # Quality gates (Milestone 3)
+      - name: List schema files (debug)
+        run: ls -R stream/schemas
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run unit tests + coverage
+        run: |
+          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=term-missing
+          coverage xml
+        continue-on-error: false
+
+      - name: Validate Avro schemas
+        run: pytest -q tests/test_schemas.py
+
+      # Smoke tests: offline eval + drift check
+      - name: Verify data files
+        run: |
+          echo "Verifying dataset:"
+          ls -lh data/ml1m_prepared
+          echo "Dataset verification complete."
+
+      - name: Run offline evaluation
+        run: python experiments/ml1m_baselines/train_itemcf.py
+
+      - name: Check for drift
+        run: python recommender/drift.py
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: unittests
+          fail_ci_if_error: true
 
-      - name: Build image
-        env:
-          DOCKERFILE: recommender.Dockerfile
-          IMAGE_NAME: ghcr.io/${{ github.repository }}/movie-recs
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -e
-          docker build -f "${DOCKERFILE}" -t "${IMAGE_NAME}:${IMAGE_TAG}" .
-          docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
-
-      - name: Push image
-        env:
-          IMAGE_NAME: ghcr.io/${{ github.repository }}/movie-recs
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -e
-          docker push "${IMAGE_NAME}:${IMAGE_TAG}"
-          docker push "${IMAGE_NAME}:latest"
-
-  # ---------- MAIN: cleanup only if push ran ----------
-  build-push-cleanup:
-    if: ${{ always() && needs.build-and-push.result == 'success' }}
+  # --------------------------------------------------------------
+  # 2) Deploy job – ONLY on pushes to main (never on PRs)
+  # --------------------------------------------------------------
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: build-and-push
+
     steps:
-      - run: echo "Cleanup after successful push"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials (required for all AWS steps)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Log in to Amazon ECR
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: private
+          mask-password: true
+
+      - name: Debug ECR variables
+        run: |
+          echo "Registry: ${{ steps.ecr-login.outputs.registry }}"
+          echo "Repo: ${{ secrets.ECR_REPOSITORY }}"
+          echo "Region: ${{ secrets.AWS_REGION }}"
+
+      # Build, tag, and push Docker image
+      - name: Build, tag, and push Docker image
+        id: build-image
+        run: |
+          # -- Capture variables explicitly inside the shell --
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY }}"
+          IMAGE_TAG="v${{ github.run_number }}"
+
+          echo "️ Building image for: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          if [ -z "$ECR_REPOSITORY" ]; then
+            echo "❌ ECR_REPOSITORY is empty! Check repo secret name and spelling."
+            exit 1
+          fi
+
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -f docker/recommender.Dockerfile .
+
+          echo " Pushing image to ECR..."
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      # Deploy to ECS service
+      - name: Deploy ECS service
+        env:
+          CLUSTER: ${{ secrets.ECS_CLUSTER }}
+          SERVICE: ${{ secrets.ECS_SERVICE }}
+          CONTAINER_NAME: ${{ secrets.ECS_CONTAINER }}
+          IMAGE_URI: ${{ steps.build-image.outputs.image }}
+        run: |
+          echo " Deploying ECS service..."
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --force-new-deployment \
+            --desired-count 1 \
+            --region ${{ secrets.AWS_REGION }}
+          echo "ECS service update triggered successfully."
+
+      # Report summary
+      - name: Summarize results
+        run: |
+          echo "### CI/CD Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tests & coverage: ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Avro schemas validated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Offline eval + drift check complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image deployed to ECS: ${{ steps.build-image.outputs.image }}" >> "$GITHUB_STEP_SUMMARY"
