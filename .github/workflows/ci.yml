@@ -10,14 +10,10 @@ permissions:
   id-token: write
 
 jobs:
-  # --------------------------------------------------------------
-  # 1) Test job – runs on PRs and on pushes to main
-  # --------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout & Python setup
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -32,9 +28,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Quality gates (Milestone 3)
       - name: List schema files (debug)
-        run: ls -R stream/schemas
+        run: |
+          if [ -d "stream/schemas" ]; then
+            echo "Listing stream/schemas:"
+            ls -R stream/schemas
+          else
+            echo "No stream/schemas directory present; skipping listing."
+          fi
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
@@ -48,7 +49,6 @@ jobs:
       - name: Validate Avro schemas
         run: pytest -q tests/test_schemas.py
 
-      # Smoke tests: offline eval + drift check
       - name: Verify data files
         run: |
           echo "Verifying dataset:"
@@ -69,9 +69,6 @@ jobs:
           flags: unittests
           fail_ci_if_error: true
 
-  # --------------------------------------------------------------
-  # 2) Deploy job – ONLY on pushes to main (never on PRs)
-  # --------------------------------------------------------------
   deploy:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -81,7 +78,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Configure AWS credentials (required for all AWS steps)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -89,7 +85,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # Log in to Amazon ECR
       - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
@@ -103,7 +98,6 @@ jobs:
           echo "Repo: ${{ secrets.ECR_REPOSITORY }}"
           echo "Region: ${{ secrets.AWS_REGION }}"
 
-      # Build, tag, and push Docker image
       - name: Build, tag, and push Docker image
         id: build-image
         run: |
@@ -127,7 +121,6 @@ jobs:
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
-      # Deploy to ECS service
       - name: Deploy ECS service
         env:
           CLUSTER: ${{ secrets.ECS_CLUSTER }}
@@ -142,9 +135,9 @@ jobs:
             --force-new-deployment \
             --desired-count 1 \
             --region ${{ secrets.AWS_REGION }}
+
           echo "ECS service update triggered successfully."
 
-      # Report summary
       - name: Summarize results
         run: |
           echo "### CI/CD Summary" >> "$GITHUB_STEP_SUMMARY"
