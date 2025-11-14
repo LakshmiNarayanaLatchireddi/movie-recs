@@ -1,0 +1,17 @@
+env: dev
+
+data:
+  train: src/data/interactions_train.csv
+  test:  src/data/interactions_test.csv
+  columns:
+    user: userId
+    item: movieId
+    rating: rating
+    timestamp: timestamp
+
+eval:
+  k: 10
+  negatives_per_user: 99
+
+logging:
+  level: INFO
