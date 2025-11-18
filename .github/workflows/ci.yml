@@ -42,7 +42,7 @@ jobs:
 
       - name: Run unit tests + coverage
         run: |
-          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=term-missing
+          pytest --maxfail=1 --disable-warnings --cov=.. --cov-report=term-missing
           coverage xml
         continue-on-error: false
 
