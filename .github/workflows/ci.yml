@@ -36,8 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Ensure pytest + pytest-cov are available for --cov options
-          pip install pytest pytest-cov
+          pip install pytest  # make sure pytest is installed
 
       # ---- Debug: list schemas (but don't fail if missing) ----
       - name: List schema files (debug)
@@ -53,14 +52,13 @@ jobs:
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
-      # ---- Unit tests + coverage ----
-      - name: Run unit tests + coverage
+      # ---- Unit tests (NO coverage flags) ----
+      - name: Run unit tests
         run: |
-          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=term-missing
-          coverage xml
+          pytest --maxfail=1 --disable-warnings
         continue-on-error: false
 
-      # ---- Additional checks used in the template repo ----
+      # ---- Optional checks (kept, but won't break CI if missing) ----
       - name: Validate Avro schemas
         run: |
           if [ -f "tests/test_schemas.py" ]; then
@@ -93,14 +91,6 @@ jobs:
           else
             echo "recommender/drift.py not found, skipping drift check."
           fi
-
-      - name: Upload coverage to Codecov
-        if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
-          fail_ci_if_error: false
 
   # --------------------------------------------------------------
   # 2) Deploy job – ONLY on pushes to main (never on PRs)
@@ -164,6 +154,6 @@ jobs:
       - name: Summarize results
         run: |
           echo "### CI/CD Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Tests & coverage: ✅" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Additional checks: schemas / data / drift" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tests: ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Optional checks: schemas / data / drift" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image deployed to ECS: ${{ steps.build-image.outputs.image }}" >> "$GITHUB_STEP_SUMMARY"
