@@ -15,14 +15,10 @@ permissions:
   id-token: write
 
 jobs:
-  # --------------------------------------------------------------
-  # 1) Test job – runs on PRs and pushes
-  # --------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout & Python setup
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -35,16 +31,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-        # Install project requirements + pytest + pytest-cov in one place
-          pip install -r requirements.txt pytest pytest-cov
-      
-      - name: Show pytest and pytest-cov versions
-        run: |
-          python -m pip show pytest
-          python -m pip show pytest-cov
-          pytest --version
-          
-      # ---- Debug: list schemas (but don't fail if missing) ----
+          pip install -r requirements.txt
+
       - name: List schema files (debug)
         run: |
           if [ -d "stream/schemas" ]; then
@@ -54,17 +42,14 @@ jobs:
             echo "No stream/schemas directory present; skipping listing."
           fi
 
-      # ---- Set PYTHONPATH to include repo root ----
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
 
-      # ---- Unit tests (NO coverage flags) ----
       - name: Run unit tests
         run: |
           pytest --maxfail=1 --disable-warnings
         continue-on-error: false
 
-      # ---- Optional checks (kept, but won't break CI if missing) ----
       - name: Validate Avro schemas
         run: |
           if [ -f "tests/test_schemas.py" ]; then
@@ -75,32 +60,30 @@ jobs:
 
       - name: Verify data files
         run: |
-          if [ -d "data" ]; then
-            echo "Verifying data directory:"
-            ls -R data
+          if [ -d "data/ml1m_prepared" ]; then
+            echo "Verifying dataset:"
+            ls -lh data/ml1m_prepared
+            echo "Dataset verification complete."
           else
-            echo "No data directory present; skipping data verification."
+            echo "data/ml1m_prepared not found, skipping data verification."
           fi
 
       - name: Run offline evaluation
         run: |
-          if [ -f "scripts/evaluate_offline.py" ]; then
-            python scripts/evaluate_offline.py || echo "Offline eval script failed or not configured; continuing."
+          if [ -f "experiments/ml1m_baselines/train_itemcf.py" ]; then
+            python experiments/ml1m_baselines/train_itemcf.py || echo "Offline eval failed; continuing."
           else
-            echo "scripts/evaluate_offline.py not found, skipping offline evaluation."
+            echo "experiments/ml1m_baselines/train_itemcf.py not found, skipping offline evaluation."
           fi
 
       - name: Check for drift
         run: |
           if [ -f "recommender/drift.py" ]; then
-            python recommender/drift.py || echo "Drift check failed or not configured; continuing."
+            python recommender/drift.py || echo "Drift check failed; continuing."
           else
             echo "recommender/drift.py not found, skipping drift check."
           fi
 
-  # --------------------------------------------------------------
-  # 2) Deploy job – ONLY on pushes to main (never on PRs)
-  # --------------------------------------------------------------
   deploy:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -156,10 +139,3 @@ jobs:
             --region ${{ secrets.AWS_REGION }}
 
           echo "ECS service update triggered successfully."
-
-      - name: Summarize results
-        run: |
-          echo "### CI/CD Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Tests: ✅" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Optional checks: schemas / data / drift" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image deployed to ECS: ${{ steps.build-image.outputs.image }}" >> "$GITHUB_STEP_SUMMARY"
